@@ -96,6 +96,29 @@ class ExecuteCodeResponse(BaseModel):
     stderr: str
     returncode: int
 
+# Chat and Follow-up Question Models
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime = datetime.now()
+
+class ConversationSession(BaseModel):
+    session_id: str
+    messages: List[ChatMessage] = []
+    created_at: datetime = datetime.now()
+    updated_at: datetime = datetime.now()
+
+class ChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+    generate_followup: bool = True
+
+class ChatResponse(BaseModel):
+    session_id: str
+    message: str
+    followup_questions: Optional[List[str]] = None
+    timestamp: datetime = datetime.now()
+
 class FileOperationRequest(BaseModel):
     operation: str  # "read", "write", "delete", "list"
     path: str
@@ -106,6 +129,13 @@ class GitHubRequest(BaseModel):
     owner: Optional[str] = None
     repo: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
+# ============================================================================
+# Global State
+# ============================================================================
+
+# In-memory conversation sessions storage
+conversation_sessions: Dict[str, ConversationSession] = {}
 
 # ============================================================================
 # Browser Automation
@@ -588,6 +618,182 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============================================================================
+# Chat Endpoints with Follow-up Questions
+# ============================================================================
+
+@app.post("/chat/message", response_model=ChatResponse)
+async def chat_message(request: ChatRequest):
+    """
+    Chat endpoint with conversation history and follow-up question generation
+    """
+    import uuid
+
+    # Generate or retrieve session ID
+    session_id = request.session_id or str(uuid.uuid4())
+
+    # Get or create conversation session
+    if session_id not in conversation_sessions:
+        conversation_sessions[session_id] = ConversationSession(
+            session_id=session_id,
+            messages=[],
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+
+    session = conversation_sessions[session_id]
+
+    # Add user message to history
+    user_message = ChatMessage(role="user", content=request.message, timestamp=datetime.now())
+    session.messages.append(user_message)
+
+    try:
+        # Call DeepSeek API with conversation history
+        async with httpx.AsyncClient() as client:
+            # Prepare messages for API
+            api_messages = [
+                {"role": msg.role, "content": msg.content}
+                for msg in session.messages
+            ]
+
+            # Call DeepSeek Chat API
+            response = await client.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": api_messages,
+                    "temperature": 0.7,
+                    "max_tokens": 2000
+                },
+                timeout=30.0
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"DeepSeek API error: {response.text}")
+
+            result = response.json()
+            assistant_message_content = result["choices"][0]["message"]["content"]
+
+            # Add assistant response to history
+            assistant_message = ChatMessage(
+                role="assistant",
+                content=assistant_message_content,
+                timestamp=datetime.now()
+            )
+            session.messages.append(assistant_message)
+            session.updated_at = datetime.now()
+
+            # Generate follow-up questions if requested
+            followup_questions = None
+            if request.generate_followup:
+                followup_questions = await generate_followup_questions(
+                    session.messages[-4:] if len(session.messages) > 4 else session.messages
+                )
+
+            return ChatResponse(
+                session_id=session_id,
+                message=assistant_message_content,
+                followup_questions=followup_questions,
+                timestamp=datetime.now()
+            )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+
+
+async def generate_followup_questions(messages: List[ChatMessage]) -> List[str]:
+    """Generate relevant follow-up questions based on conversation context"""
+    try:
+        async with httpx.AsyncClient() as client:
+            # Create a prompt for generating follow-up questions
+            context = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
+            prompt = f"""Based on this conversation:
+
+{context}
+
+Generate 3 relevant and insightful follow-up questions that the user might want to ask next.
+Return ONLY the questions, one per line, without numbering or bullet points."""
+
+            response = await client.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.8,
+                    "max_tokens": 200
+                },
+                timeout=15.0
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                questions_text = result["choices"][0]["message"]["content"]
+                questions = [q.strip() for q in questions_text.split("\n") if q.strip()]
+                return questions[:3]  # Return max 3 questions
+            else:
+                return []
+
+    except Exception as e:
+        print(f"Error generating follow-up questions: {str(e)}")
+        return []
+
+
+@app.get("/chat/sessions")
+async def get_sessions():
+    """Get all active conversation sessions"""
+    return {
+        "sessions": [
+            {
+                "session_id": session.session_id,
+                "message_count": len(session.messages),
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat()
+            }
+            for session in conversation_sessions.values()
+        ]
+    }
+
+
+@app.get("/chat/session/{session_id}")
+async def get_session(session_id: str):
+    """Get a specific conversation session"""
+    if session_id not in conversation_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = conversation_sessions[session_id]
+    return {
+        "session_id": session.session_id,
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat()
+            }
+            for msg in session.messages
+        ],
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat()
+    }
+
+
+@app.delete("/chat/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a conversation session"""
+    if session_id not in conversation_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    del conversation_sessions[session_id]
+    return {"message": "Session deleted successfully"}
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -602,7 +808,10 @@ async def root():
             "execute_javascript": "POST /execute/javascript",
             "files": "POST /files",
             "github": "POST /github",
-            "upload": "POST /upload"
+            "upload": "POST /upload",
+            "chat": "POST /chat/message",
+            "sessions": "GET /chat/sessions",
+            "session": "GET /chat/session/{id}"
         }
     }
 
