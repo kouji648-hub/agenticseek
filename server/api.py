@@ -14,6 +14,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pathlib import Path
 
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -341,30 +344,30 @@ Return a JSON array of tasks to execute. Example:
             # === SEARCH TASK ENHANCEMENT ===
             # Check if this is a search task before default execution
             if "search for" in task.lower() or "search" in task.lower():
-            try:
-            import re
-            # Extract search query from task description
-            match = re.search(r"search(?:\s+for)?\s+['\"]?([^'\"]+)['\"]?", task, re.IGNORECASE)
-            if match and "page" in context:
-            search_query = match.group(1).strip()
-            page = context["page"]
-                            
-            # Use improved search function
-            search_result = await find_and_interact_with_search(page, search_query, task)
-            if search_result["success"]:
-            result = {
-            "status": "success",
-            "task": task,
-            "type": "search",
-            "query": search_query,
-            "method": search_result.get("method_used", "unknown"),
-            "details": search_result
-            }
-            results.append(result)
-            context["page"] = page
-            continue
-            except Exception as e:
-            print(f"[Search Enhancement] Error: {str(e)}")
+                try:
+                    import re
+                    # Extract search query from task description
+                    match = re.search(r"search(?:\s+for)?\s+['\"]?([^'\"]+)['\"]?", task, re.IGNORECASE)
+                    if match and "page" in context:
+                        search_query = match.group(1).strip()
+                        page = context["page"]
+
+                        # Use improved search function
+                        search_result = await find_and_interact_with_search(page, search_query, task)
+                        if search_result["success"]:
+                            result = {
+                                "status": "success",
+                                "task": task,
+                                "type": "search",
+                                "query": search_query,
+                                "method": search_result.get("method_used", "unknown"),
+                                "details": search_result
+                            }
+                            results.append(result)
+                            context["page"] = page
+                            continue
+                except Exception as e:
+                    print(f"[Search Enhancement] Error: {str(e)}")
                 
             # === DEFAULT TASK EXECUTION ===
             result = await execute_agent_task(task, context)
