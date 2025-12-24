@@ -87,6 +87,23 @@ class BrowseResponse(BaseModel):
     content: Optional[str] = None
     error: Optional[str] = None
 
+class BrowserLoginRequest(BaseModel):
+    url: str
+    username_selector: str
+    password_selector: str
+    submit_selector: str
+    username: str
+    password: str
+    session_name: Optional[str] = None
+
+class BrowserLoginResponse(BaseModel):
+    success: bool
+    session_id: str
+    current_url: str
+    screenshot: Optional[str] = None
+    cookies: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
+
 class ExecuteCodeRequest(BaseModel):
     code: str
     language: str = "python"
@@ -136,6 +153,9 @@ class GitHubRequest(BaseModel):
 
 # In-memory conversation sessions storage
 conversation_sessions: Dict[str, ConversationSession] = {}
+
+# In-memory browser sessions storage
+browser_sessions: Dict[str, Dict[str, Any]] = {}
 
 # ============================================================================
 # Browser Automation
@@ -454,6 +474,66 @@ async def browse_url(request: BrowseRequest):
         return BrowseResponse(
             title="Error",
             url=request.url,
+            error=str(e)
+        )
+
+@app.post("/browse/login", response_model=BrowserLoginResponse)
+async def browser_login(request: BrowserLoginRequest):
+    """
+    Automated browser login with session persistence
+    """
+    import uuid
+
+    try:
+        browser = await get_browser()
+        page = await browser.new_page()
+
+        # Navigate to login page
+        await page.goto(request.url, wait_until="networkidle")
+
+        # Fill in login credentials
+        await page.fill(request.username_selector, request.username)
+        await page.fill(request.password_selector, request.password)
+
+        # Click submit button
+        await page.click(request.submit_selector)
+
+        # Wait for navigation
+        await page.wait_for_load_state("networkidle")
+
+        # Generate session ID
+        session_id = request.session_name or str(uuid.uuid4())
+
+        # Get cookies
+        cookies = await page.context.cookies()
+
+        # Get current URL
+        current_url = page.url
+
+        # Take screenshot
+        screenshot = await take_screenshot(page)
+
+        # Store session
+        browser_sessions[session_id] = {
+            "cookies": cookies,
+            "url": current_url,
+            "timestamp": datetime.now().isoformat(),
+            "page": page  # Keep page alive for session
+        }
+
+        return BrowserLoginResponse(
+            success=True,
+            session_id=session_id,
+            current_url=current_url,
+            screenshot=screenshot,
+            cookies=cookies
+        )
+
+    except Exception as e:
+        return BrowserLoginResponse(
+            success=False,
+            session_id="",
+            current_url=request.url,
             error=str(e)
         )
 
@@ -794,6 +874,52 @@ async def delete_session(session_id: str):
     return {"message": "Session deleted successfully"}
 
 
+@app.get("/browse/sessions")
+async def get_browser_sessions():
+    """Get all active browser sessions"""
+    return {
+        "sessions": [
+            {
+                "session_id": session_id,
+                "url": session_data["url"],
+                "timestamp": session_data["timestamp"],
+                "cookie_count": len(session_data["cookies"])
+            }
+            for session_id, session_data in browser_sessions.items()
+        ]
+    }
+
+
+@app.get("/browse/session/{session_id}")
+async def get_browser_session(session_id: str):
+    """Get a specific browser session"""
+    if session_id not in browser_sessions:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+
+    session_data = browser_sessions[session_id]
+    return {
+        "session_id": session_id,
+        "url": session_data["url"],
+        "timestamp": session_data["timestamp"],
+        "cookies": session_data["cookies"]
+    }
+
+
+@app.delete("/browse/session/{session_id}")
+async def delete_browser_session(session_id: str):
+    """Delete a browser session"""
+    if session_id not in browser_sessions:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+
+    # Close the page if it exists
+    if "page" in browser_sessions[session_id]:
+        page = browser_sessions[session_id]["page"]
+        await page.close()
+
+    del browser_sessions[session_id]
+    return {"message": "Browser session deleted successfully"}
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -804,14 +930,16 @@ async def root():
             "health": "GET /health",
             "agent": "POST /agent",
             "browse": "POST /browse",
+            "browse_login": "POST /browse/login",
+            "browse_sessions": "GET /browse/sessions",
             "execute_python": "POST /execute/python",
             "execute_javascript": "POST /execute/javascript",
             "files": "POST /files",
             "github": "POST /github",
             "upload": "POST /upload",
             "chat": "POST /chat/message",
-            "sessions": "GET /chat/sessions",
-            "session": "GET /chat/session/{id}"
+            "chat_sessions": "GET /chat/sessions",
+            "chat_session": "GET /chat/session/{id}"
         }
     }
 
