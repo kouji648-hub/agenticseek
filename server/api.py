@@ -59,9 +59,12 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 WORK_DIR = Path("/tmp/agenticseek")
 WORK_DIR.mkdir(exist_ok=True)
 
-# Global browser instance
+# Global browser instance (kept for backward compatibility but not recommended)
 browser_instance: Optional[Browser] = None
 playwright_instance = None
+
+# Browser crash recovery flag
+_browser_broken = False
 
 # ============================================================================
 # Data Models
@@ -162,13 +165,14 @@ browser_sessions: Dict[str, Dict[str, Any]] = {}
 # ============================================================================
 
 async def get_browser() -> Browser:
-    """Get or create a browser instance"""
+    """Get or create a browser instance (using Firefox for stability)"""
     global browser_instance, playwright_instance
-    
+
     if browser_instance is None:
         playwright_instance = await async_playwright().start()
-        browser_instance = await playwright_instance.chromium.launch()
-    
+        # Using Firefox instead of Chromium due to crash issues
+        browser_instance = await playwright_instance.firefox.launch(headless=True)
+
     return browser_instance
 
 async def close_browser():
@@ -271,12 +275,16 @@ async def execute_agent_task(task: str, context: Dict[str, Any]) -> Dict[str, An
                 if urls:
                     url = urls[0]
             
-            await page.goto(url, wait_until="networkidle")
+            await page.goto(url, wait_until="networkidle", timeout=30000)
             screenshot = await take_screenshot(page)
             title = await page.title()
-            
-            await page.close()
-            
+
+            try:
+                if not page.is_closed():
+                    await page.close()
+            except:
+                pass
+
             return {
                 "status": "success",
                 "task": task,
@@ -447,29 +455,36 @@ Provide a brief summary of what was accomplished."""
 
 @app.post("/browse", response_model=BrowseResponse)
 async def browse_url(request: BrowseRequest):
-    """Browse a URL and return content/screenshot"""
-    
+    """Browse a URL and return content/screenshot with crash recovery"""
+    browser = None
+    page = None
+    playwright = None
+
     try:
-        browser = await get_browser()
+        # Create fresh browser instance for each request (more stable)
+        # Using Firefox due to Chromium crash issues on this system
+        playwright = await async_playwright().start()
+        browser = await playwright.firefox.launch(
+            headless=True
+        )
         page = await browser.new_page()
-        
-        await page.goto(request.url, wait_until="networkidle")
-        
+
+        # Navigate with timeout
+        await page.goto(request.url, wait_until="networkidle", timeout=30000)
+
         title = await page.title()
         screenshot = await take_screenshot(page)
-        
+
         # Get page content
         content = await page.content()
-        
-        await page.close()
-        
+
         return BrowseResponse(
             title=title,
             url=request.url,
             screenshot=screenshot,
             content=content[:1000]  # Limit content size
         )
-    
+
     except Exception as e:
         return BrowseResponse(
             title="Error",
@@ -477,29 +492,48 @@ async def browse_url(request: BrowseRequest):
             error=str(e)
         )
 
+    finally:
+        # Always clean up resources
+        try:
+            if page and not page.is_closed():
+                await page.close()
+        except:
+            pass
+        try:
+            if browser and browser.is_connected():
+                await browser.close()
+        except:
+            pass
+        try:
+            if playwright:
+                await playwright.stop()
+        except:
+            pass
+
 @app.post("/browse/login", response_model=BrowserLoginResponse)
 async def browser_login(request: BrowserLoginRequest):
     """
-    Automated browser login with session persistence
+    Automated browser login with session persistence and crash recovery
     """
     import uuid
+    page = None
 
     try:
         browser = await get_browser()
         page = await browser.new_page()
 
-        # Navigate to login page
-        await page.goto(request.url, wait_until="networkidle")
+        # Navigate to login page with timeout
+        await page.goto(request.url, wait_until="networkidle", timeout=30000)
 
-        # Fill in login credentials
-        await page.fill(request.username_selector, request.username)
-        await page.fill(request.password_selector, request.password)
+        # Fill in login credentials with timeout
+        await page.fill(request.username_selector, request.username, timeout=10000)
+        await page.fill(request.password_selector, request.password, timeout=10000)
 
-        # Click submit button
-        await page.click(request.submit_selector)
+        # Click submit button with timeout
+        await page.click(request.submit_selector, timeout=10000)
 
-        # Wait for navigation
-        await page.wait_for_load_state("networkidle")
+        # Wait for navigation with timeout
+        await page.wait_for_load_state("networkidle", timeout=30000)
 
         # Generate session ID
         session_id = request.session_name or str(uuid.uuid4())
@@ -530,6 +564,14 @@ async def browser_login(request: BrowserLoginRequest):
         )
 
     except Exception as e:
+        # Clean up page on error
+        if page:
+            try:
+                if not page.is_closed():
+                    await page.close()
+            except:
+                pass
+
         return BrowserLoginResponse(
             success=False,
             session_id="",
@@ -907,14 +949,18 @@ async def get_browser_session(session_id: str):
 
 @app.delete("/browse/session/{session_id}")
 async def delete_browser_session(session_id: str):
-    """Delete a browser session"""
+    """Delete a browser session with safe cleanup"""
     if session_id not in browser_sessions:
         raise HTTPException(status_code=404, detail="Browser session not found")
 
     # Close the page if it exists
     if "page" in browser_sessions[session_id]:
         page = browser_sessions[session_id]["page"]
-        await page.close()
+        try:
+            if not page.is_closed():
+                await page.close()
+        except Exception as e:
+            print(f"Error closing page for session {session_id}: {e}")
 
     del browser_sessions[session_id]
     return {"message": "Browser session deleted successfully"}
