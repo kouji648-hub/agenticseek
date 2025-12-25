@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-echo -e "${BLUE}🚀 AgenticSeek Development Environment${NC}"
+echo -e "${BLUE}🚀 AgenticSeek 開発環境${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -33,39 +33,39 @@ check_port() {
 find_available_port() {
     local start_port=$1
     local port=$start_port
-    
+
     while check_port $port; do
-        echo -e "${YELLOW}⚠️  Port $port is in use, trying $((port+1))...${NC}"
+        echo -e "${YELLOW}⚠️  ポート $port は使用中です。次のポート $((port+1)) を試します...${NC}"
         port=$((port+1))
         if [ $port -gt $((start_port+100)) ]; then
-            echo -e "${RED}❌ Could not find available port${NC}"
+            echo -e "${RED}❌ 利用可能なポートが見つかりませんでした${NC}"
             return 1
         fi
     done
-    
+
     echo $port
 }
 
 # Check for required tools
-echo -e "${BLUE}📋 Checking requirements...${NC}"
+echo -e "${BLUE}📋 必要なツールを確認中...${NC}"
 
 if ! command -v node &> /dev/null; then
-    echo -e "${RED}❌ Node.js is not installed${NC}"
+    echo -e "${RED}❌ Node.js がインストールされていません${NC}"
     exit 1
 fi
 
 if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}❌ Python 3 is not installed${NC}"
+    echo -e "${RED}❌ Python 3 がインストールされていません${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Node.js and Python 3 are installed${NC}"
+echo -e "${GREEN}✅ Node.js と Python 3 がインストールされています${NC}"
 echo ""
 
 # Find available ports
-echo -e "${BLUE}🔍 Finding available ports...${NC}"
+echo -e "${BLUE}🔍 利用可能なポートを検索中...${NC}"
 
-FRONTEND_PORT=$(find_available_port 3000)
+FRONTEND_PORT=$(find_available_port 5173)
 if [ $? -ne 0 ]; then
     exit 1
 fi
@@ -75,12 +75,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${GREEN}✅ Frontend port: $FRONTEND_PORT${NC}"
-echo -e "${GREEN}✅ Backend port: $BACKEND_PORT${NC}"
+echo -e "${GREEN}✅ フロントエンドポート: $FRONTEND_PORT${NC}"
+echo -e "${GREEN}✅ バックエンドポート: $BACKEND_PORT${NC}"
 echo ""
 
 # Start backend server
-echo -e "${BLUE}🔧 Starting Backend API Server...${NC}"
+echo -e "${BLUE}🔧 バックエンドAPIサーバーを起動中...${NC}"
 
 # Create a temporary directory for logs
 LOG_DIR="/tmp/agenticseek-logs"
@@ -94,7 +94,7 @@ cd "$SCRIPT_DIR"
 
 # Create Python virtual environment if it doesn't exist
 if [ ! -d "$SCRIPT_DIR/venv" ]; then
-    echo -e "${YELLOW}📦 Creating Python virtual environment...${NC}"
+    echo -e "${YELLOW}📦 Python仮想環境を作成中...${NC}"
     python3 -m venv "$SCRIPT_DIR/venv"
 fi
 
@@ -102,13 +102,13 @@ fi
 source "$SCRIPT_DIR/venv/bin/activate"
 
 # Install/update dependencies
-echo -e "${YELLOW}📥 Installing Python dependencies...${NC}"
+echo -e "${YELLOW}📥 Python依存関係をインストール中...${NC}"
 pip install --upgrade pip > /dev/null 2>&1
 pip install -r "$SCRIPT_DIR/server/requirements.txt" > /dev/null 2>&1
 
-# Install Playwright browsers
-echo -e "${YELLOW}🌐 Installing Playwright browsers...${NC}"
-playwright install chromium > /dev/null 2>&1
+# Install Playwright browsers (Firefox)
+echo -e "${YELLOW}🦊 Playwright (Firefox) をインストール中...${NC}"
+playwright install firefox > /dev/null 2>&1
 
 # Set environment variables
 export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-sk-d8d78811ea69434fad5d447b5c1027e3}"
@@ -118,79 +118,100 @@ export PORT=$BACKEND_PORT
 nohup python "$SCRIPT_DIR/server/api.py" > "$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 
-echo -e "${GREEN}✅ Backend API Server started (PID: $BACKEND_PID)${NC}"
+echo -e "${GREEN}✅ バックエンドAPIサーバーが起動しました (PID: $BACKEND_PID)${NC}"
 echo -e "${GREEN}   📍 URL: http://localhost:$BACKEND_PORT${NC}"
 echo ""
 
 # Wait for backend to be ready
-echo -e "${YELLOW}⏳ Waiting for Backend API to be ready...${NC}"
+echo -e "${YELLOW}⏳ バックエンドAPIの準備を待機中...${NC}"
 sleep 3
 
 # Check if backend is running
 if ! kill -0 $BACKEND_PID 2>/dev/null; then
-    echo -e "${RED}❌ Backend API failed to start${NC}"
-    echo -e "${RED}   Check logs: $BACKEND_LOG${NC}"
+    echo -e "${RED}❌ バックエンドAPIの起動に失敗しました${NC}"
+    echo -e "${RED}   ログを確認してください: $BACKEND_LOG${NC}"
     exit 1
 fi
 
 # Start frontend server
-echo -e "${BLUE}🔧 Starting Frontend Development Server...${NC}"
+echo -e "${BLUE}🎨 フロントエンド開発サーバーを起動中...${NC}"
 
 # Update environment variable for frontend
 export VITE_API_BASE_URL="http://localhost:$BACKEND_PORT"
 
-nohup npm run dev -- --port $FRONTEND_PORT > "$FRONTEND_LOG" 2>&1 &
+nohup npm run dev -- --port $FRONTEND_PORT --host > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
-echo -e "${GREEN}✅ Frontend Development Server started (PID: $FRONTEND_PID)${NC}"
+echo -e "${GREEN}✅ フロントエンド開発サーバーが起動しました (PID: $FRONTEND_PID)${NC}"
 echo -e "${GREEN}   📍 URL: http://localhost:$FRONTEND_PORT${NC}"
 echo ""
 
+# Wait for frontend to be ready
+echo -e "${YELLOW}⏳ フロントエンドの準備を待機中...${NC}"
+sleep 3
+
 # Display summary
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}✅ AgenticSeek Development Environment Ready!${NC}"
+echo -e "${GREEN}✨ AgenticSeek が起動しました！${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-echo -e "${YELLOW}Frontend:${NC}"
-echo -e "  🌐 URL: http://localhost:$FRONTEND_PORT"
-echo -e "  📝 Logs: $FRONTEND_LOG"
+echo -e "${YELLOW}📍 アクセスURL:${NC}"
+echo -e "   🌐 フロントエンド: http://localhost:$FRONTEND_PORT"
+echo -e "   🔧 バックエンドAPI: http://localhost:$BACKEND_PORT"
+echo -e "   📚 APIドキュメント: http://localhost:$BACKEND_PORT/docs"
 echo ""
-echo -e "${YELLOW}Backend API:${NC}"
-echo -e "  🌐 URL: http://localhost:$BACKEND_PORT"
-echo -e "  📚 Docs: http://localhost:$BACKEND_PORT/docs"
-echo -e "  📝 Logs: $BACKEND_LOG"
+echo -e "${YELLOW}📝 ログファイル:${NC}"
+echo -e "   フロントエンド: $FRONTEND_LOG"
+echo -e "   バックエンド: $BACKEND_LOG"
 echo ""
-echo -e "${YELLOW}Processes:${NC}"
-echo -e "  Frontend PID: $FRONTEND_PID"
-echo -e "  Backend PID: $BACKEND_PID"
+echo -e "${YELLOW}🎯 プロセスID:${NC}"
+echo -e "   フロントエンド PID: $FRONTEND_PID"
+echo -e "   バックエンド PID: $BACKEND_PID"
 echo ""
-echo -e "${YELLOW}To stop the servers:${NC}"
-echo -e "  kill $FRONTEND_PID  # Stop frontend"
-echo -e "  kill $BACKEND_PID   # Stop backend"
-echo -e "  Or press Ctrl+C to stop this script"
+echo -e "${YELLOW}🛑 停止方法:${NC}"
+echo -e "   kill $FRONTEND_PID  # フロントエンド停止"
+echo -e "   kill $BACKEND_PID   # バックエンド停止"
+echo -e "   または Ctrl+C を押してください"
 echo ""
 
 # Function to cleanup on exit
 cleanup() {
     echo ""
-    echo -e "${YELLOW}🛑 Shutting down servers...${NC}"
-    
+    echo -e "${YELLOW}🛑 サーバーを停止中...${NC}"
+
     if kill -0 $FRONTEND_PID 2>/dev/null; then
         kill $FRONTEND_PID 2>/dev/null || true
-        echo -e "${GREEN}✅ Frontend stopped${NC}"
+        echo -e "${GREEN}✅ フロントエンドを停止しました${NC}"
     fi
-    
+
     if kill -0 $BACKEND_PID 2>/dev/null; then
         kill $BACKEND_PID 2>/dev/null || true
-        echo -e "${GREEN}✅ Backend stopped${NC}"
+        echo -e "${GREEN}✅ バックエンドを停止しました${NC}"
     fi
-    
-    echo -e "${GREEN}✅ Cleanup complete${NC}"
+
+    echo -e "${GREEN}✅ クリーンアップ完了${NC}"
     exit 0
 }
 
 # Set trap to cleanup on exit
 trap cleanup EXIT INT TERM
+
+# Open browser
+echo -e "${BLUE}🌐 ブラウザを開いています...${NC}"
+sleep 2
+
+# Try to open in Google Chrome, fallback to default browser
+if open -a "Google Chrome" "http://localhost:$FRONTEND_PORT" 2>/dev/null; then
+    echo -e "${GREEN}✅ Google Chrome でブラウザを開きました${NC}"
+else
+    open "http://localhost:$FRONTEND_PORT"
+    echo -e "${GREEN}✅ デフォルトブラウザで開きました${NC}"
+fi
+
+echo ""
+echo -e "${YELLOW}💡 このウィンドウは開いたままにしてください。${NC}"
+echo -e "${YELLOW}   終了する場合は Ctrl+C を押すか、ウィンドウを閉じてください。${NC}"
+echo ""
 
 # Keep the script running
 wait
