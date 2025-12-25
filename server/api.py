@@ -150,6 +150,37 @@ class GitHubRequest(BaseModel):
     repo: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
 
+# Progress Tracking Models
+class ProgressStep(BaseModel):
+    id: str
+    name: str
+    status: str  # "pending", "in_progress", "completed", "failed"
+    progress: float = 0.0  # 0.0 to 100.0
+    message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+class TaskProgress(BaseModel):
+    task_id: str
+    name: str
+    status: str  # "pending", "in_progress", "completed", "failed"
+    steps: List[ProgressStep] = []
+    current_step: int = 0
+    overall_progress: float = 0.0
+    created_at: datetime = datetime.now()
+    updated_at: datetime = datetime.now()
+    error: Optional[str] = None
+
+class CreateTaskRequest(BaseModel):
+    name: str
+    steps: List[str]  # List of step names
+
+class UpdateProgressRequest(BaseModel):
+    step_id: str
+    status: Optional[str] = None
+    progress: Optional[float] = None
+    message: Optional[str] = None
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -159,6 +190,9 @@ conversation_sessions: Dict[str, ConversationSession] = {}
 
 # In-memory browser sessions storage
 browser_sessions: Dict[str, Dict[str, Any]] = {}
+
+# In-memory progress tracking storage
+task_progress: Dict[str, TaskProgress] = {}
 
 # ============================================================================
 # Browser Automation
@@ -966,6 +1000,232 @@ async def delete_browser_session(session_id: str):
     return {"message": "Browser session deleted successfully"}
 
 
+# ============================================================================
+# Progress Tracking Endpoints
+# ============================================================================
+
+@app.post("/progress/task")
+async def create_task(request: CreateTaskRequest):
+    """Create a new task with progress tracking"""
+    import uuid
+
+    task_id = str(uuid.uuid4())
+
+    # Create progress steps
+    steps = []
+    for i, step_name in enumerate(request.steps):
+        step = ProgressStep(
+            id=f"step_{i}",
+            name=step_name,
+            status="pending",
+            progress=0.0
+        )
+        steps.append(step)
+
+    # Create task
+    task = TaskProgress(
+        task_id=task_id,
+        name=request.name,
+        status="pending",
+        steps=steps,
+        current_step=0,
+        overall_progress=0.0
+    )
+
+    task_progress[task_id] = task
+
+    return {
+        "task_id": task_id,
+        "status": "created",
+        "task": task.dict()
+    }
+
+
+@app.post("/progress/task/{task_id}/start")
+async def start_task(task_id: str):
+    """Start a task"""
+    if task_id not in task_progress:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = task_progress[task_id]
+    task.status = "in_progress"
+    task.updated_at = datetime.now()
+
+    # Start first step
+    if task.steps:
+        task.steps[0].status = "in_progress"
+        task.steps[0].started_at = datetime.now()
+        task.current_step = 0
+
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "task": task.dict()
+    }
+
+
+@app.put("/progress/task/{task_id}/step/{step_id}")
+async def update_step_progress(task_id: str, step_id: str, request: UpdateProgressRequest):
+    """Update progress for a specific step"""
+    if task_id not in task_progress:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = task_progress[task_id]
+
+    # Find step
+    step = None
+    step_index = None
+    for i, s in enumerate(task.steps):
+        if s.id == step_id:
+            step = s
+            step_index = i
+            break
+
+    if step is None:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    # Update step
+    if request.status:
+        step.status = request.status
+        if request.status == "in_progress":
+            step.started_at = datetime.now()
+        elif request.status in ["completed", "failed"]:
+            step.completed_at = datetime.now()
+
+    if request.progress is not None:
+        step.progress = request.progress
+
+    if request.message:
+        step.message = request.message
+
+    # Update overall progress
+    total_progress = sum(s.progress for s in task.steps)
+    task.overall_progress = total_progress / len(task.steps) if task.steps else 0.0
+
+    # Update current step
+    task.current_step = step_index
+
+    # Check if step is completed, move to next
+    if step.status == "completed" and step_index < len(task.steps) - 1:
+        next_step = task.steps[step_index + 1]
+        next_step.status = "in_progress"
+        next_step.started_at = datetime.now()
+        task.current_step = step_index + 1
+
+    # Check if all steps completed
+    if all(s.status == "completed" for s in task.steps):
+        task.status = "completed"
+    elif any(s.status == "failed" for s in task.steps):
+        task.status = "failed"
+
+    task.updated_at = datetime.now()
+
+    return {
+        "task_id": task_id,
+        "status": "updated",
+        "task": task.dict()
+    }
+
+
+@app.get("/progress/task/{task_id}")
+async def get_task_progress(task_id: str):
+    """Get current progress for a task"""
+    if task_id not in task_progress:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = task_progress[task_id]
+    return {
+        "task_id": task_id,
+        "task": task.dict()
+    }
+
+
+@app.get("/progress/tasks")
+async def get_all_tasks():
+    """Get all tasks"""
+    return {
+        "tasks": [task.dict() for task in task_progress.values()]
+    }
+
+
+@app.delete("/progress/task/{task_id}")
+async def delete_task(task_id: str):
+    """Delete a task"""
+    if task_id not in task_progress:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    del task_progress[task_id]
+    return {"message": "Task deleted successfully"}
+
+
+@app.post("/progress/demo")
+async def run_demo_task(background_tasks: BackgroundTasks):
+    """Run a demo task with simulated progress"""
+    import uuid
+
+    task_id = str(uuid.uuid4())
+
+    # Create demo task
+    steps = [
+        "Initializing system",
+        "Loading data",
+        "Processing information",
+        "Generating results",
+        "Finalizing output"
+    ]
+
+    task = TaskProgress(
+        task_id=task_id,
+        name="Demo Task",
+        status="in_progress",
+        steps=[
+            ProgressStep(id=f"step_{i}", name=step, status="pending", progress=0.0)
+            for i, step in enumerate(steps)
+        ]
+    )
+
+    task_progress[task_id] = task
+
+    # Run demo in background
+    async def run_demo():
+        import asyncio
+
+        for i, step in enumerate(task.steps):
+            # Start step
+            step.status = "in_progress"
+            step.started_at = datetime.now()
+            task.current_step = i
+            task.updated_at = datetime.now()
+
+            # Simulate progress
+            for progress in range(0, 101, 20):
+                await asyncio.sleep(0.5)
+                step.progress = float(progress)
+
+                # Calculate overall progress
+                total_progress = sum(s.progress for s in task.steps[:i]) + step.progress
+                task.overall_progress = total_progress / len(task.steps)
+                task.updated_at = datetime.now()
+
+            # Complete step
+            step.status = "completed"
+            step.completed_at = datetime.now()
+            step.progress = 100.0
+
+        # Complete task
+        task.status = "completed"
+        task.overall_progress = 100.0
+        task.updated_at = datetime.now()
+
+    background_tasks.add_task(run_demo)
+
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "message": "Demo task started in background"
+    }
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -985,7 +1245,13 @@ async def root():
             "upload": "POST /upload",
             "chat": "POST /chat/message",
             "chat_sessions": "GET /chat/sessions",
-            "chat_session": "GET /chat/session/{id}"
+            "chat_session": "GET /chat/session/{id}",
+            "progress_create": "POST /progress/task",
+            "progress_start": "POST /progress/task/{id}/start",
+            "progress_update": "PUT /progress/task/{id}/step/{step_id}",
+            "progress_get": "GET /progress/task/{id}",
+            "progress_all": "GET /progress/tasks",
+            "progress_demo": "POST /progress/demo"
         }
     }
 

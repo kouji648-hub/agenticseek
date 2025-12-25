@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Send, Upload, Code2, Github, Rocket } from "lucide-react";
 import { useState } from "react";
 import Chat from "@/components/Chat";
+import ProgressDisplay from "@/components/ProgressDisplay";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:7777";
 
@@ -89,9 +90,10 @@ export default function Home() {
 
         {/* Main Content */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-7 mb-6 bg-slate-800 border border-slate-700">
+          <TabsList className="grid w-full grid-cols-8 mb-6 bg-slate-800 border border-slate-700">
             <TabsTrigger value="agent" className="text-xs sm:text-sm">🤖 Agent</TabsTrigger>
             <TabsTrigger value="chat" className="text-xs sm:text-sm">💬 Chat</TabsTrigger>
+            <TabsTrigger value="progress" className="text-xs sm:text-sm">📊 Progress</TabsTrigger>
             <TabsTrigger value="browse" className="text-xs sm:text-sm">🌐 Browser</TabsTrigger>
             <TabsTrigger value="files" className="text-xs sm:text-sm">📁 Files</TabsTrigger>
             <TabsTrigger value="code" className="text-xs sm:text-sm">⚙️ Code</TabsTrigger>
@@ -165,6 +167,11 @@ export default function Home() {
             <Card className="bg-slate-800 border-slate-700 h-[600px]">
               <Chat apiBaseUrl={API_BASE_URL} />
             </Card>
+          </TabsContent>
+
+          {/* Progress Tab */}
+          <TabsContent value="progress">
+            <ProgressDisplay apiBaseUrl={API_BASE_URL} />
           </TabsContent>
 
           {/* Browser Tab */}
