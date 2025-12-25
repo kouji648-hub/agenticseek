@@ -181,6 +181,55 @@ class UpdateProgressRequest(BaseModel):
     progress: Optional[float] = None
     message: Optional[str] = None
 
+# Agent Execution Models
+class ActionType(BaseModel):
+    name: str  # "search", "browse", "code", "analyze", "plan"
+    icon: str
+    color: str
+
+class AgentAction(BaseModel):
+    id: str
+    action_type: str
+    description: str
+    status: str  # "pending", "running", "completed", "failed"
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    result: Optional[str] = None
+    error: Optional[str] = None
+
+class AgentThought(BaseModel):
+    id: str
+    content: str
+    thought_type: str  # "planning", "analysis", "decision", "observation"
+    timestamp: datetime = datetime.now()
+
+class AgentExecution(BaseModel):
+    execution_id: str
+    task: str
+    status: str  # "pending", "running", "completed", "failed"
+    thoughts: List[AgentThought] = []
+    actions: List[AgentAction] = []
+    logs: List[str] = []
+    current_action: int = 0
+    created_at: datetime = datetime.now()
+    updated_at: datetime = datetime.now()
+    completed_at: Optional[datetime] = None
+    final_result: Optional[str] = None
+
+class ExecuteAgentRequest(BaseModel):
+    task: str
+
+class AddActionRequest(BaseModel):
+    action_type: str
+    description: str
+
+class AddThoughtRequest(BaseModel):
+    content: str
+    thought_type: str = "planning"
+
+class AddLogRequest(BaseModel):
+    message: str
+
 # ============================================================================
 # Global State
 # ============================================================================
@@ -193,6 +242,9 @@ browser_sessions: Dict[str, Dict[str, Any]] = {}
 
 # In-memory progress tracking storage
 task_progress: Dict[str, TaskProgress] = {}
+
+# In-memory agent execution storage
+agent_executions: Dict[str, AgentExecution] = {}
 
 # ============================================================================
 # Browser Automation
@@ -293,9 +345,10 @@ def call_deepseek_api(prompt: str, system: str = "") -> str:
 
 async def execute_agent_task(task: str, context: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a single agent task"""
-    
+
     # Parse task type
-    if "browse" in task.lower() or "visit" in task.lower() or "access" in task.lower():
+    task_lower = task.lower()
+    if any(keyword in task_lower for keyword in ["browse", "visit", "access", "アクセス", "スクリーンショット", "取得"]):
         # Browser automation task
         try:
             browser = await get_browser()
@@ -332,7 +385,7 @@ async def execute_agent_task(task: str, context: Dict[str, Any]) -> Dict[str, An
                 "error": str(e)
             }
     
-    elif "python" in task.lower() or "code" in task.lower() or "execute" in task.lower():
+    elif any(keyword in task_lower for keyword in ["python", "code", "execute", "コード", "実行", "プログラム"]):
         # Code execution task
         try:
             # Extract code from task
@@ -361,7 +414,7 @@ async def execute_agent_task(task: str, context: Dict[str, Any]) -> Dict[str, An
                 "error": str(e)
             }
     
-    elif "file" in task.lower() or "read" in task.lower() or "write" in task.lower():
+    elif any(keyword in task_lower for keyword in ["file", "read", "write", "ファイル", "読み", "書き"]):
         # File operation task
         try:
             return {
@@ -402,16 +455,25 @@ async def execute_agent(request: AgentRequest):
     
     try:
         # Step 1: Use LLM to create a plan
-        system_prompt = """You are an autonomous AI agent. Your task is to break down user requests into executable steps.
-        
-Available capabilities:
-- Browser automation (visit websites, take screenshots, interact with pages)
-- Python code execution
-- File operations (read, write, delete files)
-- GitHub integration (create issues, push code)
+        system_prompt = """あなたは自律型AIエージェントです。ユーザーのリクエストを実行可能なステップに分解してください。
 
-Return a JSON array of tasks to execute. Example:
-["visit https://www.google.com and take a screenshot", "execute python code: print('Hello World')"]"""
+利用可能な機能:
+- ブラウザ自動化 (Webサイトへのアクセス、スクリーンショット取得、ページ操作)
+- Pythonコード実行
+- ファイル操作 (読み取り、書き込み、削除)
+- GitHub統合 (Issue作成、コードプッシュ)
+
+重要: タスクには必ず「アクセス」「スクリーンショット」「取得」「実行」などの動詞を含めてください。
+
+実行するタスクをJSON配列形式で返してください。すべて日本語で記述してください。
+
+例1（天気予報の場合）:
+["https://tenki.jp にアクセスしてスクリーンショットを取得"]
+
+例2（Googleの場合）:
+["https://www.google.com にアクセスしてスクリーンショットを取得", "Pythonコードを実行: print('Hello World')"]
+
+JSONのみを返してください。説明は不要です。"""
         
         plan_text = call_deepseek_api(request.prompt, system_prompt)
         
@@ -998,6 +1060,195 @@ async def delete_browser_session(session_id: str):
 
     del browser_sessions[session_id]
     return {"message": "Browser session deleted successfully"}
+
+
+# ============================================================================
+# Agent Execution Endpoints
+# ============================================================================
+
+@app.post("/agent/execute")
+async def start_agent_execution(request: ExecuteAgentRequest, background_tasks: BackgroundTasks):
+    """Start a new agent execution"""
+    import uuid
+
+    execution_id = str(uuid.uuid4())
+
+    execution = AgentExecution(
+        execution_id=execution_id,
+        task=request.task,
+        status="running",
+        thoughts=[],
+        actions=[],
+        logs=[]
+    )
+
+    agent_executions[execution_id] = execution
+
+    # Add initial thought
+    initial_thought = AgentThought(
+        id=str(uuid.uuid4()),
+        content=f"Starting task: {request.task}",
+        thought_type="planning"
+    )
+    execution.thoughts.append(initial_thought)
+    execution.logs.append(f"🎯 Task started: {request.task}")
+
+    # Run agent in background
+    async def run_agent():
+        import asyncio
+
+        # Simulate agent execution
+        steps = [
+            ("planning", "Analyzing task requirements..."),
+            ("search", "Searching for relevant information..."),
+            ("analysis", "Processing collected data..."),
+            ("decision", "Determining best approach..."),
+            ("browse", "Accessing web resources..."),
+            ("code", "Executing required operations...")
+        ]
+
+        for thought_type, description in steps:
+            await asyncio.sleep(2)
+
+            # Add thought
+            thought = AgentThought(
+                id=str(uuid.uuid4()),
+                content=description,
+                thought_type=thought_type
+            )
+            execution.thoughts.append(thought)
+
+            # Add action
+            action = AgentAction(
+                id=str(uuid.uuid4()),
+                action_type=thought_type,
+                description=description,
+                status="running",
+                started_at=datetime.now()
+            )
+            execution.actions.append(action)
+            execution.logs.append(f"🔄 {description}")
+            execution.updated_at = datetime.now()
+
+            await asyncio.sleep(3)
+
+            # Complete action
+            action.status = "completed"
+            action.completed_at = datetime.now()
+            action.result = f"Completed: {description}"
+            execution.logs.append(f"✅ Completed: {description}")
+            execution.updated_at = datetime.now()
+
+        # Complete execution
+        execution.status = "completed"
+        execution.completed_at = datetime.now()
+        execution.final_result = "Task completed successfully"
+        execution.logs.append("✨ Task completed successfully!")
+        execution.updated_at = datetime.now()
+
+    background_tasks.add_task(run_agent)
+
+    return {
+        "execution_id": execution_id,
+        "status": "started",
+        "message": "Agent execution started"
+    }
+
+
+@app.get("/agent/execution/{execution_id}")
+async def get_execution(execution_id: str):
+    """Get execution status"""
+    if execution_id not in agent_executions:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    execution = agent_executions[execution_id]
+    return {
+        "execution": execution.dict()
+    }
+
+
+@app.get("/agent/executions")
+async def get_all_executions():
+    """Get all executions"""
+    return {
+        "executions": [exec.dict() for exec in agent_executions.values()]
+    }
+
+
+@app.post("/agent/execution/{execution_id}/action")
+async def add_action(execution_id: str, request: AddActionRequest):
+    """Add an action to execution"""
+    import uuid
+
+    if execution_id not in agent_executions:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    execution = agent_executions[execution_id]
+
+    action = AgentAction(
+        id=str(uuid.uuid4()),
+        action_type=request.action_type,
+        description=request.description,
+        status="pending"
+    )
+
+    execution.actions.append(action)
+    execution.updated_at = datetime.now()
+
+    return {
+        "action_id": action.id,
+        "status": "added"
+    }
+
+
+@app.post("/agent/execution/{execution_id}/thought")
+async def add_thought(execution_id: str, request: AddThoughtRequest):
+    """Add a thought to execution"""
+    import uuid
+
+    if execution_id not in agent_executions:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    execution = agent_executions[execution_id]
+
+    thought = AgentThought(
+        id=str(uuid.uuid4()),
+        content=request.content,
+        thought_type=request.thought_type
+    )
+
+    execution.thoughts.append(thought)
+    execution.updated_at = datetime.now()
+
+    return {
+        "thought_id": thought.id,
+        "status": "added"
+    }
+
+
+@app.post("/agent/execution/{execution_id}/log")
+async def add_log(execution_id: str, request: AddLogRequest):
+    """Add a log entry to execution"""
+    if execution_id not in agent_executions:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    execution = agent_executions[execution_id]
+    execution.logs.append(request.message)
+    execution.updated_at = datetime.now()
+
+    return {
+        "status": "added"
+    }
+
+
+@app.delete("/agent/execution/{execution_id}")
+async def delete_execution(execution_id: str):
+    """Delete an execution"""
+    if execution_id not in agent_executions:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    del agent_executions[execution_id]
+    return {"message": "Execution deleted successfully"}
 
 
 # ============================================================================

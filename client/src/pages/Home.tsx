@@ -7,6 +7,7 @@ import { Loader2, Send, Upload, Code2, Github, Rocket } from "lucide-react";
 import { useState } from "react";
 import Chat from "@/components/Chat";
 import ProgressDisplay from "@/components/ProgressDisplay";
+import AgentVisualization from "@/components/AgentVisualization";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:7777";
 
@@ -103,63 +104,77 @@ export default function Home() {
 
           {/* Agent Tab */}
           <TabsContent value="agent">
-            <Card className="bg-slate-800 border-slate-700">
-              <CardHeader>
-                <CardTitle className="text-white">🤖 AI Agent</CardTitle>
-                <CardDescription className="text-slate-400">自然言語でタスクを指示してください</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Textarea
-                    placeholder="例: Google にアクセスして、スクリーンショットを取得してから、Python で 'Hello World' を出力してください"
-                    value={agentPrompt}
-                    onChange={(e) => setAgentPrompt(e.target.value)}
-                    className="bg-slate-700 border-slate-600 text-white placeholder-slate-500"
-                    rows={4}
-                  />
-                </div>
-                <Button
-                  onClick={handleAgentSubmit}
-                  disabled={agentLoading || !agentPrompt.trim()}
-                  className="w-full bg-blue-600 hover:bg-blue-700"
-                >
-                  {agentLoading ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />}
-                  実行
-                </Button>
-
-                {agentResults && (
-                  <div className="mt-6 space-y-4">
-                    <div className="bg-slate-700 rounded-lg p-4">
-                      <h3 className="text-white font-semibold mb-2">📋 実行計画</h3>
-                      <div className="space-y-2">
-                        {agentResults.plan?.map((task: string, idx: number) => (
-                          <div key={idx} className="text-slate-300 text-sm">• {task}</div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-700 rounded-lg p-4">
-                      <h3 className="text-white font-semibold mb-2">✅ 実行結果</h3>
-                      <div className="space-y-2 max-h-96 overflow-y-auto">
-                        {agentResults.results?.map((result: any, idx: number) => (
-                          <div key={idx} className="text-slate-300 text-sm bg-slate-600 p-2 rounded">
-                            {result.status === "skipped" ? (
-                              <span className="text-yellow-400">⏭️ スキップ: {result.task}</span>
-                            ) : result.error ? (
-                              <span className="text-red-400">❌ エラー: {result.error}</span>
-                            ) : result.stdout ? (
-                              <span className="text-green-400">✅ 出力: {result.stdout}</span>
-                            ) : (
-                              <span className="text-blue-400">📸 スクリーンショット取得完了</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+            <div className="space-y-6">
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader>
+                  <CardTitle className="text-white">🤖 AI Agent</CardTitle>
+                  <CardDescription className="text-slate-400">自然言語でタスクを指示してください</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Textarea
+                      placeholder="例: Google にアクセスして、スクリーンショットを取得してから、Python で 'Hello World' を出力してください"
+                      value={agentPrompt}
+                      onChange={(e) => setAgentPrompt(e.target.value)}
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500"
+                      rows={4}
+                    />
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                  <Button
+                    onClick={handleAgentSubmit}
+                    disabled={agentLoading || !agentPrompt.trim()}
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                  >
+                    {agentLoading ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />}
+                    実行
+                  </Button>
+
+                  {agentResults && (
+                    <div className="mt-6 space-y-4">
+                      <div className="bg-slate-700 rounded-lg p-4">
+                        <h3 className="text-white font-semibold mb-2">📋 実行計画</h3>
+                        <div className="space-y-2">
+                          {agentResults.plan?.map((task: string, idx: number) => (
+                            <div key={idx} className="text-slate-300 text-sm">• {task}</div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-700 rounded-lg p-4">
+                        <h3 className="text-white font-semibold mb-2">✅ 実行結果</h3>
+                        <div className="space-y-4 max-h-96 overflow-y-auto">
+                          {agentResults.results?.map((result: any, idx: number) => (
+                            <div key={idx} className="bg-slate-600 p-3 rounded">
+                              {result.status === "skipped" ? (
+                                <span className="text-yellow-400 text-sm">⏭️ スキップ: {result.task}</span>
+                              ) : result.error ? (
+                                <span className="text-red-400 text-sm">❌ エラー: {result.error}</span>
+                              ) : result.stdout ? (
+                                <span className="text-green-400 text-sm">✅ 出力: {result.stdout}</span>
+                              ) : result.screenshot ? (
+                                <div className="space-y-2">
+                                  <div className="text-blue-400 text-sm font-semibold">📸 {result.title || 'スクリーンショット'}</div>
+                                  <img
+                                    src={`data:image/png;base64,${result.screenshot}`}
+                                    alt="Screenshot"
+                                    className="w-full rounded border border-slate-500"
+                                  />
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 text-sm">✅ {result.task}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Agent Visualization */}
+              <AgentVisualization apiBaseUrl={API_BASE_URL} />
+            </div>
           </TabsContent>
 
           {/* Chat Tab */}
